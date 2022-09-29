@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -14,7 +15,10 @@ import (
 	"github.com/knusbaum/acmetools"
 )
 
+var plumb = flag.Bool("p", false, "Causes ghlink to plumb the link rather than printing it.")
+
 func main() {
+	flag.Parse()
 	// 	npc, err := dialAcme()
 	// 	if err != nil {
 	// 		fmt.Printf("FATAL: %s\n", err)
@@ -118,14 +122,14 @@ func main() {
 		}
 		lines++
 	}
-	fmt.Printf("Line %d\n", lines)
+	//fmt.Printf("Line %d\n", lines)
 
 	tag, err := w.Tag()
 	if err != nil {
 		fmt.Printf("FATAL: %s\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("tag: [%s]\n", tag)
+	//fmt.Printf("tag: [%s]\n", tag)
 	parts := strings.SplitN(tag, " ", 2)
 	fname := parts[0]
 	if _, err := os.Stat(fname); err != nil {
@@ -133,12 +137,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	link, err := findGitRemote(fname)
+	link, err := gitFileLink(fname)
 	if err != nil {
 		fmt.Printf("FATAL: %s\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("Link: %s\n", link)
+	link = fmt.Sprintf("%s#L%d", link, lines)
+	if *plumb {
+		err = acmetools.Plumb(link)
+		if err != nil {
+			fmt.Printf("FATAL: %s\n", err)
+			os.Exit(1)
+		}
+	} else {
+		fmt.Printf("%s\n", link)
+	}
 }
 
 func parseGitRemote(file, line string) (string, error) {
@@ -158,7 +171,7 @@ func parseGitRemote(file, line string) (string, error) {
 		return "", err
 	}
 	grpath := strings.TrimPrefix(file, tl)
-	link := fmt.Sprintf("https://github.com/%s/%s/commit/%s/%s", owner, repo, commit, grpath)
+	link := fmt.Sprintf("https://github.com/%s/%s/blob/%s%s", owner, repo, commit, grpath)
 	return link, nil
 }
 
@@ -171,7 +184,7 @@ func findGitToplevel(file string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("Failed to find top level: %w", err)
 	}
-	dir := string(b.Bytes())
+	dir := strings.TrimSpace(string(b.Bytes()))
 	return dir, nil
 }
 
@@ -184,11 +197,11 @@ func currentGitCommit(file string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("Failed to find current commit hash: %w", err)
 	}
-	dir := string(b.Bytes())
+	dir := strings.TrimSpace(string(b.Bytes()))
 	return dir, nil
 }
 
-func findGitRemote(file string) (string, error) {
+func gitFileLink(file string) (string, error) {
 	cmd := exec.Command("git", "remote", "-v")
 	cmd.Dir = path.Dir(file)
 	var b bytes.Buffer
@@ -203,12 +216,12 @@ func findGitRemote(file string) (string, error) {
 		if err != nil {
 			break
 		}
-		fmt.Printf("L: %s\n", string(l))
+		//fmt.Printf("L: %s\n", string(l))
 		p, err := parseGitRemote(file, string(l))
 		if err == nil {
 			return p, nil
 		}
-		fmt.Printf("Err: %s\n", err)
+		//fmt.Printf("Err: %s\n", err)
 	}
 	return "", fmt.Errorf("Could not find github repository.")
 }

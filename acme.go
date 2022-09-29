@@ -77,6 +77,10 @@ type Window struct {
 }
 
 func NewAcme() (*Acme, error) {
+	u, err := user.Current()
+	if err != nil {
+		return nil, err
+	}
 	ns, err := Namespace()
 	if err != nil {
 		return nil, fmt.Errorf("Can't locate namespace: %w", err)
@@ -85,7 +89,7 @@ func NewAcme() (*Acme, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Failed to dial acme: %w", err)
 	}
-	npc, err := client.NewClient(acmef, "kjn", "")
+	npc, err := client.NewClient(acmef, u.Username, "")
 	if err != nil {
 		return nil, fmt.Errorf("Failed to attach to acme: %w", err)
 	}
@@ -189,4 +193,37 @@ func (w *Window) Tag() (string, error) {
 	defer f.Close()
 	bs, err := ioutil.ReadAll(f)
 	return string(bs), nil
+}
+
+func Plumb(s string) error {
+	u, err := user.Current()
+	if err != nil {
+		return err
+	}
+	ns, err := Namespace()
+	if err != nil {
+		return fmt.Errorf("Can't locate namespace: %w", err)
+	}
+	acmef, err := net.Dial("unix", path.Join(ns, "plumb"))
+	if err != nil {
+		return fmt.Errorf("Failed to dial plumber: %w", err)
+	}
+	npc, err := client.NewClient(acmef, u.Username, "")
+	if err != nil {
+		return fmt.Errorf("Failed to attach to acme: %w", err)
+	}
+	// TODO: add this when go9p adds Close to client
+	//defer npc.Close()
+
+	f, err := npc.Open("/send", proto.Owrite)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = fmt.Fprintf(f, "acmetools\nweb\n/\ntext\n\n%d\n%s", len(s), s)
+	if err != nil {
+		return err
+	}
+	return nil
 }
