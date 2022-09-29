@@ -1,6 +1,7 @@
 package acmetools
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -193,6 +194,64 @@ func (w *Window) Tag() (string, error) {
 	defer f.Close()
 	bs, err := ioutil.ReadAll(f)
 	return string(bs), nil
+}
+
+func (w *Window) lnFromSel() (int, error) {
+	xdata, err := w.XData()
+	if err != nil {
+		return 0, err
+	}
+	line := 1
+	r := bufio.NewReader(xdata)
+	for {
+		_, err := r.ReadSlice('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return 0, err
+		}
+		line++
+	}
+	return line, nil
+}
+
+func (w *Window) LineNumber() (l0 int, l1 int, err error) {
+	// Make sure addr is open
+	_, _, err = w.Addr()
+	if err != nil {
+		return 0, 0, err
+	}
+	// For some reason addr=dot is required before a successful WriteAddr.
+	// Not sure why
+	err = w.Ctl("addr=dot")
+	if err != nil {
+		return 0, 0, err
+	}
+	err = w.WriteAddr("0,.-")
+	if err != nil {
+		return 0, 0, err
+	}
+	l0, err = w.lnFromSel()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	// For some reason addr=dot is required before a successful WriteAddr.
+	// Not sure why
+	err = w.Ctl("addr=dot")
+	if err != nil {
+		return 0, 0, err
+	}
+	err = w.WriteAddr("0,.")
+	if err != nil {
+		return 0, 0, err
+	}
+	l1, err = w.lnFromSel()
+	if err != nil {
+		return 0, 0, err
+	}
+	return l0, l1, nil
 }
 
 func Plumb(s string) error {

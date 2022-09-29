@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path"
@@ -19,49 +18,12 @@ var plumb = flag.Bool("p", false, "Causes ghlink to plumb the link rather than p
 
 func main() {
 	flag.Parse()
-	// 	npc, err := dialAcme()
-	// 	if err != nil {
-	// 		fmt.Printf("FATAL: %s\n", err)
-	// 		os.Exit(1)
-	// 	}
 
 	winid := os.Getenv("winid")
 	if winid == "" {
 		fmt.Printf("FATAL: Could not find acme window. $winid not set.\n")
 		os.Exit(1)
 	}
-	// 	fmt.Printf("Opening /%s/ctl\n", winid)
-	// 	f, err := npc.Open(fmt.Sprintf("/%s/ctl", winid), proto.Ordwr)
-	// 	if err != nil {
-	// 		fmt.Printf("Tried to read index, but failed: %s\n", err)
-	// 		os.Exit(1)
-	// 	}
-	// 	defer f.Close()
-	//
-	// 	f2, err := npc.Open(fmt.Sprintf("/%s/data", winid), proto.Ordwr)
-	// 	if err != nil {
-	// 		fmt.Printf("Tried to read index, but failed: %s\n", err)
-	// 		os.Exit(1)
-	// 	}
-	// 	defer f2.Close()
-	//
-	// 	f3, err := npc.Open(fmt.Sprintf("/%s/addr", winid), proto.Ordwr)
-	// 	if err != nil {
-	// 		fmt.Printf("Tried to read index, but failed: %s\n", err)
-	// 		os.Exit(1)
-	// 	}
-	// 	defer f3.Close()
-	// 	//io.WriteString(f3, "mount.")
-	// 	//io.WriteString(f3, ".")
-	//
-	// 	_, err = io.WriteString(f, "addr=dot\n")
-	// 	if err != nil {
-	// 		fmt.Printf("While writing ctl: FATAL: %s\n", err)
-	// 		os.Exit(1)
-	// 	}
-	//
-	// 	io.Copy(os.Stdout, f3)
-	// 	//io.Copy(os.Stdout, f2)
 
 	a, err := acmetools.NewAcme()
 	if err != nil {
@@ -75,74 +37,61 @@ func main() {
 		os.Exit(1)
 	}
 
-	_, _, err = w.Addr()
-	if err != nil {
-		fmt.Printf("FATAL: %s\n", err)
-		os.Exit(1)
-	}
-
-	err = w.Ctl("addr=dot")
-	if err != nil {
-		fmt.Printf("FATAL: %s\n", err)
-		os.Exit(1)
-	}
-
+	// // Using addr to find the selection address
+	// 	_, _, err = w.Addr()
+	// 	if err != nil {
+	// 		fmt.Printf("FATAL: %s\n", err)
+	// 		os.Exit(1)
+	// 	}
+	// 	err = w.Ctl("addr=dot")
+	// 	if err != nil {
+	// 		fmt.Printf("FATAL: %s\n", err)
+	// 		os.Exit(1)
+	// 	}
 	// 	q0, q1, err := w.Addr()
 	// 	if err != nil {
 	// 		fmt.Printf("FATAL: %s\n", err)
 	// 		os.Exit(1)
 	// 	}
-
 	//fmt.Printf("ADDR IS AT %d,%d\n", q0, q1)
-
 	//err = w.WriteAddr(fmt.Sprintf("#0,#%d", q1))
-	err = w.WriteAddr("0,.")
-	if err != nil {
-		fmt.Printf("FATAL: %s\n", err)
-		os.Exit(1)
-	}
-
-	xdata, err := w.XData()
-	if err != nil {
-		fmt.Printf("FATAL: %s\n", err)
-		os.Exit(1)
-	}
-
-	lines := 1
-	r := bufio.NewReader(xdata)
-	for {
-		_, err := r.ReadSlice('\n')
-		//fmt.Printf("l: [%s], err: %v\n", l, err)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			fmt.Printf("FATAL: %s\n", err)
-			os.Exit(1)
-		}
-		lines++
-	}
-	//fmt.Printf("Line %d\n", lines)
 
 	tag, err := w.Tag()
 	if err != nil {
 		fmt.Printf("FATAL: %s\n", err)
 		os.Exit(1)
 	}
-	//fmt.Printf("tag: [%s]\n", tag)
 	parts := strings.SplitN(tag, " ", 2)
 	fname := parts[0]
-	if _, err := os.Stat(fname); err != nil {
-		fmt.Printf("%s: %s\n", fname, err)
+	stat, err := os.Stat(fname)
+	if err != nil {
+		fmt.Printf("FATAL: %s: %s\n", fname, err)
 		os.Exit(1)
 	}
 
-	link, err := gitFileLink(fname)
+	lineStart := 1
+	lineEnd := 1
+	if !stat.IsDir() {
+		// Find the line number
+		lineStart, lineEnd, err = w.LineNumber()
+		if err != nil {
+			fmt.Printf("FATAL: %s\n", err)
+			os.Exit(1)
+		}
+	}
+
+	link, err := gitFileLink(fname, stat.IsDir())
 	if err != nil {
 		fmt.Printf("FATAL: %s\n", err)
 		os.Exit(1)
 	}
-	link = fmt.Sprintf("%s#L%d", link, lines)
+	if !stat.IsDir() {
+		if lineStart != lineEnd {
+			link = fmt.Sprintf("%s#L%d-#L%d", link, lineStart, lineEnd)
+		} else {
+			link = fmt.Sprintf("%s#L%d", link, lineStart)
+		}
+	}
 	if *plumb {
 		err = acmetools.Plumb(link)
 		if err != nil {
@@ -154,7 +103,7 @@ func main() {
 	}
 }
 
-func parseGitRemote(file, line string) (string, error) {
+func parseGitRemote(file, line string, dir bool) (string, error) {
 	gre := regexp.MustCompile(`git@github\.com:([^/]+)/([^[:space:]]+)`)
 	matches := gre.FindStringSubmatch(line)
 	if matches == nil {
@@ -171,7 +120,12 @@ func parseGitRemote(file, line string) (string, error) {
 		return "", err
 	}
 	grpath := strings.TrimPrefix(file, tl)
-	link := fmt.Sprintf("https://github.com/%s/%s/blob/%s%s", owner, repo, commit, grpath)
+	var link string
+	if dir {
+		link = fmt.Sprintf("https://github.com/%s/%s/tree/%s%s", owner, repo, commit, grpath)
+	} else {
+		link = fmt.Sprintf("https://github.com/%s/%s/blob/%s%s", owner, repo, commit, grpath)
+	}
 	return link, nil
 }
 
@@ -201,7 +155,7 @@ func currentGitCommit(file string) (string, error) {
 	return dir, nil
 }
 
-func gitFileLink(file string) (string, error) {
+func gitFileLink(file string, dir bool) (string, error) {
 	cmd := exec.Command("git", "remote", "-v")
 	cmd.Dir = path.Dir(file)
 	var b bytes.Buffer
@@ -217,7 +171,7 @@ func gitFileLink(file string) (string, error) {
 			break
 		}
 		//fmt.Printf("L: %s\n", string(l))
-		p, err := parseGitRemote(file, string(l))
+		p, err := parseGitRemote(file, string(l), dir)
 		if err == nil {
 			return p, nil
 		}
