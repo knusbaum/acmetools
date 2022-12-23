@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"os/user"
 	"path"
 	"strconv"
@@ -66,7 +67,20 @@ func canonicalize(disp string) string {
 }
 
 type Acme struct {
-	c *client.Client
+	c    *client.Client
+	cons *client.File
+}
+
+func (a *Acme) Log(f string, args ...interface{}) error {
+	if a.cons == nil {
+		f, err := a.c.Open("/cons", proto.Ordwr)
+		if err != nil {
+			return fmt.Errorf("Tried to open cons file, but failed: %w", err)
+		}
+		a.cons = f
+	}
+	_, err := fmt.Fprintf(a.cons, f, args...)
+	return err
 }
 
 type Window struct {
@@ -75,7 +89,8 @@ type Window struct {
 
 	addr *client.File
 	ctl  *client.File
-	data *client.File
+	//data *client.File
+	body *client.File
 }
 
 type EventStream struct {
@@ -104,6 +119,20 @@ func parseOrigin(r rune) Origin {
 		return EV_Mouse
 	}
 	return Origin(-1)
+}
+
+func (o Origin) Char() rune {
+	switch o {
+	case EV_Write:
+		return 'E'
+	case EV_File:
+		return 'F'
+	case EV_Keyboard:
+		return 'K'
+	case EV_Mouse:
+		return 'M'
+	}
+	return '?'
 }
 
 func (o Origin) String() string {
@@ -154,6 +183,28 @@ func parseEType(r rune) EType {
 		return ET_TagBtn2
 	}
 	return EType(-1)
+}
+
+func (t EType) Char() rune {
+	switch t {
+	case ET_BodyDelete:
+		return 'D'
+	case ET_TagDelete:
+		return 'd'
+	case ET_BodyInsert:
+		return 'I'
+	case ET_TagInsert:
+		return 'i'
+	case ET_BodyBtn3:
+		return 'L'
+	case ET_TagBtn3:
+		return 'l'
+	case ET_BodyBtn2:
+		return 'X'
+	case ET_TagBtn2:
+		return 'x'
+	}
+	return '?'
 }
 
 func (t EType) String() string {
@@ -281,6 +332,28 @@ func parseEvent(r *bufio.Reader) (*Event, error) {
 	}, nil
 }
 
+func (e *Event) IsBuiltin() bool {
+	fmt.Printf("Flag: 0x%X\n", e.Flag)
+	return e.Flag&0x1 != 0
+}
+
+func (e *Event) HasExpansion() bool {
+	return e.Flag&0x2 != 0
+}
+
+func (e *Event) Chorded() bool {
+	return e.Flag&0x8 != 0
+}
+
+func (e *Event) String() string {
+	return fmt.Sprintf("%c%c%d %d %d %d %s", e.Origin.Char(), e.Type.Char(), e.StartAddr, e.EndAddr, e.Flag, e.NChars, e.S)
+}
+
+func (e *EventStream) WriteBack(ev *Event) error {
+	_, err := fmt.Fprintf(e.f, "%c%c%d %d\n", ev.Origin.Char(), ev.Type.Char(), ev.StartAddr, ev.EndAddr)
+	return err
+}
+
 func (e *EventStream) Close() error {
 	fmt.Printf("Closing Event Stream.\n")
 	return e.f.Close()
@@ -303,7 +376,7 @@ func NewAcme() (*Acme, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Failed to attach to acme: %w", err)
 	}
-	return &Acme{npc}, nil
+	return &Acme{npc, nil}, nil
 }
 
 func (a *Acme) NewWindow() (*Window, error) {
@@ -338,10 +411,10 @@ func (w *Window) Close() error {
 		w.ctl.Close()
 		w.ctl = nil
 	}
-	if w.data != nil {
-		w.data.Close()
-		w.data = nil
-	}
+	// 	if w.data != nil {
+	// 		w.data.Close()
+	// 		w.data = nil
+	// 	}
 	return nil
 }
 
@@ -494,15 +567,16 @@ func (w *Window) Addr() (q0 int, q1 int, err error) {
 	return q0, q1, nil
 }
 
-func (w *Window) XData() (io.ReadWriter, error) {
-	if w.data == nil {
-		f, err := w.c.Open(fmt.Sprintf("/%s/xdata", w.id), proto.Ordwr)
-		if err != nil {
-			return nil, fmt.Errorf("Tried to open data file, but failed: %w", err)
-		}
-		w.data = f
+func (w *Window) XData() (io.ReadWriteCloser, error) {
+	//if w.data == nil {
+	f, err := w.c.Open(fmt.Sprintf("/%s/xdata", w.id), proto.Ordwr)
+	if err != nil {
+		return nil, fmt.Errorf("Tried to open data file, but failed: %w", err)
 	}
-	return w.data, nil
+	//w.data = f
+	//}
+	//return w.data, nil
+	return f, nil
 }
 
 func (w *Window) Tag() (string, error) {
@@ -515,11 +589,22 @@ func (w *Window) Tag() (string, error) {
 	return string(bs), nil
 }
 
+func (w *Window) AppendTag(s string) error {
+	f, err := w.c.Open(fmt.Sprintf("/%s/tag", w.id), proto.Ordwr)
+	if err != nil {
+		return fmt.Errorf("Tried to open data file, but failed: %w", err)
+	}
+	defer f.Close()
+	_, err = io.WriteString(f, s)
+	return err
+}
+
 func (w *Window) lnFromSel() (int, error) {
 	xdata, err := w.XData()
 	if err != nil {
 		return 0, err
 	}
+	defer xdata.Close()
 	line := 1
 	r := bufio.NewReader(xdata)
 	for {
@@ -571,6 +656,69 @@ func (w *Window) LineNumber() (l0 int, l1 int, err error) {
 		return 0, 0, err
 	}
 	return l0, l1, nil
+}
+
+// func (w *Window) Selected() (string, error) {
+// 	// Using addr to find the selection address
+// 	_, _, err = w.Addr()
+// 	if err != nil {
+// 		fmt.Printf("FATAL: %s\n", err)
+// 		os.Exit(1)
+// 	}
+// 	err = w.Ctl("addr=dot")
+// 	if err != nil {
+// 		fmt.Printf("FATAL: %s\n", err)
+// 		os.Exit(1)
+// 	}
+// 	q0, q1, err := w.Addr()
+// 	if err != nil {
+// 		fmt.Printf("FATAL: %s\n", err)
+// 		os.Exit(1)
+// 	}
+// }
+
+func (w *Window) Selected() (string, error) {
+	_, _, err := w.Addr()
+	if err != nil {
+		return "", err
+	}
+	// For some reason addr=dot is required before a successful WriteAddr.
+	// Not sure why
+	err = w.Ctl("addr=dot")
+	if err != nil {
+		return "", err
+	}
+	// 	err = w.WriteAddr("0,.-")
+	// 	if err != nil {
+	// 		return 0, 0, err
+	// 	}
+	xd, err := w.XData()
+	if err != nil {
+		return "", fmt.Errorf("Failed to read selected text: %w", err)
+	}
+	defer xd.Close()
+	bs, err := io.ReadAll(xd)
+	if err != nil {
+		return "", err
+	}
+	return string(bs), nil
+}
+
+func (w *Window) Body() (io.ReadWriter, error) {
+	if w.body == nil {
+		f, err := w.c.Open(fmt.Sprintf("/%s/body", w.id), proto.Ordwr)
+		if err != nil {
+			return nil, fmt.Errorf("Tried to open body file, but failed: %w", err)
+		}
+		w.body = f
+	}
+	return w.body, nil
+}
+
+func Plumb2(dir string, s string) error {
+	c := exec.Command("plumb", s)
+	c.Dir = dir
+	return c.Run()
 }
 
 func Plumb(s string) error {
