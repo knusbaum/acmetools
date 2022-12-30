@@ -258,13 +258,13 @@ func RunDlvWin(a *acmetools.Acme, dir string, cmds <-chan string) {
 						fmt.Fprintf(body, "\tat %s:%d\n", fr.File, fr.Line)
 					}
 				} else {
-					err = acmetools.Plumb2(dir, fmt.Sprintf("%s:%d", bp.File, bp.Line))
+					err = acmetools.PlumbCmd(dir, fmt.Sprintf("%s:%d", bp.File, bp.Line))
 					if err != nil {
 						fmt.Fprintf(body, "Failed to plumb: %v\n", err)
 					}
 				}
 			} else {
-				err = acmetools.Plumb2(dir, fmt.Sprintf("%s:%d", s.CurrentThread.File, s.CurrentThread.Line))
+				err = acmetools.PlumbCmd(dir, fmt.Sprintf("%s:%d", s.CurrentThread.File, s.CurrentThread.Line))
 				if err != nil {
 					fmt.Fprintf(body, "Failed to plumb: %v\n", err)
 				}

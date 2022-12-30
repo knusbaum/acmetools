@@ -93,7 +93,7 @@ func main() {
 		}
 	}
 	if *plumb {
-		err = acmetools.Plumb(link)
+		err = acmetools.Plumb("ghlink", "web", "/", link)
 		if err != nil {
 			fmt.Printf("FATAL: %s\n", err)
 			os.Exit(1)
