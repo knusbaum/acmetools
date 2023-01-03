@@ -2,8 +2,6 @@ module github.com/knusbaum/acmetools
 
 go 1.18
 
-replace github.com/knusbaum/go9p => /home/kjn/CodeBase/go9p
-
 require (
 	github.com/davecgh/go-spew v1.1.1
 	github.com/go-delve/delve v1.9.1
